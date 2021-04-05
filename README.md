@@ -38,7 +38,7 @@ D = G%DOS(energy)
 
     @misc{daCunha2021,
         author       = {C. R. da Cunha},
-        title        = {{GreenCheetah}},
+        title        = {{GreenCheetah, a library for non-equilibrium Green's functions}},
         month        = apr,
         year         = 2021,
         version      = {1.0},
@@ -49,3 +49,4 @@ D = G%DOS(energy)
 ## License
 
 Copyright (c) 2021 - Carlo R. da Cunha, "GreenCheetah"
+<carlo.requiao@gmail.com>
