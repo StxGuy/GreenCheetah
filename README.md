@@ -17,8 +17,8 @@
 ```
 type(GF) :: G
    
-G = GF(Potential,number_of_rows,number_of_columns)
-```
+G = GF(Potential,delta_y,delta_x)
+```   
    
 ##### Transmission
 
