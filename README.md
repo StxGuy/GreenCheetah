@@ -48,5 +48,5 @@ D = G%DOS(energy)
         
 ## License
 
-Copyright (c) 2021 - Carlo R. da Cunha, "GreenCheetah"
+Copyright (c) 2021 - Carlo R. da Cunha, "GreenCheetah" \
 <carlo.requiao@gmail.com>
