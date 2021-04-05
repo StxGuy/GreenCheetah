@@ -1,37 +1,44 @@
-## Welcome to GitHub Pages
+## Welcome to GreenCheetah Documentation
 
-You can use the [editor on GitHub](https://github.com/StxGuy/GreenCheetah/edit/gh-pages/index.md) to maintain and preview the content for your website in Markdown files.
+![Logo](https://github.com/StxGuy/GreenCheetah/blob/main/gsheetah.svg)
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+GreenCheetah is a Fortran library for a Non-Equilibrium Green's function (NEGF) approach for solving problems of quantum transport.
 
-### Markdown
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+## Installation
 
-```markdown
-Syntax highlighted code block
+make
 
-# Header 1
-## Header 2
-### Header 3
+## Usage
 
-- Bulleted
-- List
+To initialize:
 
-1. Numbered
-2. List
+    use GreenCheetah
 
-**Bold** and _Italic_ and `Code` text
+    [...]
+    
+    type(GreeFunction) :: G
 
-[Link](url) and ![Image](src)
-```
+    G = GreenFunction(Potential,number_of_rows,number_of_columns)
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
+#### Transmission Function
+    t = G%Transmission(number_of_points,maximum_energy)
 
-### Jekyll Themes
+#### Density of States
+    DOS = G%DOS(energy)
 
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/StxGuy/GreenCheetah/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
+## Credits
+    Projet GreenCheetah https://github.com/StxGuy/GreenCheetah
+    Copyright (c) 2021 Carlo R. da Cunha (carlo.requiao@gmail.com)
 
-### Support or Contact
+    @misc{daCunha2021,
+      author = {C. R. da Cunha},
+      title = {GreenCheetah},
+      year = {2021},
+      publisher = {GitHub},
+      version = {1.0},
+      journal = {GitHub repository},
+      url= {https://github.com/StxGuy/GreenCheetah}
+    }
 
-Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://support.github.com/contact) and we’ll help you sort it out.
+
