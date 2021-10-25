@@ -1,39 +1,49 @@
+
+
 module GreenCheetah
     implicit none
     
     integer,parameter,private   :: dp = kind(1.d0)
     
+    ! Effective mass: Semicond. Sci. Technol. 27 (2012) 035021
+    ! InGaAs = 0.041
+    
     real(dp),parameter  :: hbar = 1.054571817E-34   ! J.s
     real(dp),parameter  :: Planck = 6.62607015E-34  ! J.s
     real(dp),parameter  :: mass = 9.1093837015E-31  ! kg
-    real(dp),parameter  :: efm = 0.041
     real(dp),parameter  :: exrg = 1.602176634E-19   ! C
     real(dp),parameter  :: kB = 1.380649E-23        ! J/K
     real(dp),parameter  :: eta = 1E-15
-           
-    private :: Fermi
-    
-    type,public :: GF
+    real(dp),parameter  :: pi = 3.14159265358979323
+               
+    type,public :: GType
         real,allocatable    :: Pot(:,:)
         integer             :: nr,nc
         real(dp)            :: hex,hey
         real(dp)            :: dx,dy
+        real                :: efm
+        
+        real(dp)            :: FermiEnergy
+        real(dp)            :: FermiWaveLength
+        real(dp)            :: FermiWaveVector
     
         contains
     
         procedure           :: DOS
-        procedure           :: transmission
-        procedure           :: SingleT
         procedure           :: SGM
+        procedure           :: EnergySweep
+        procedure           :: MagneticSweep
+        procedure           :: transmission
+        procedure           :: getFermi
         procedure,private   :: Hamiltonian
         procedure,private   :: leadGreensFunction
-        procedure,private   :: GAsm
+        procedure,private   :: tfun
         
         final                :: GreenDestructor
     end type
            
 
-    interface GF
+    interface GType
         procedure   :: GreenConstructor
     end interface
     
@@ -42,12 +52,13 @@ module GreenCheetah
     !------------------------------------------------------!
     !             CONSTRUCTOR AND DESTRUCTOR               !
     !------------------------------------------------------!
-    ! Constructor
-    function GreenConstructor(V,dx,dy) result(self)
+    function GreenConstructor(V,Height,Width,efm,flag) result(self)
         implicit none
         
         real(dp),intent(in) :: V(:,:)
-        real(dp),intent(in) :: dx,dy
+        real,intent(in)     :: Height, Width
+        real,intent(in)     :: efm              ! Effective mass
+        logical,intent(in)  :: flag
         type(GType)         :: self
         
         integer             :: nr,nc,s(2)
@@ -56,24 +67,31 @@ module GreenCheetah
         nr = s(1)
         nc = s(2)
         
-        
         allocate(self%Pot(nr,nc))
         self%Pot = V
         self%nr = nr
         self%nc = nc
-        self%hex = ((hbar/dx**2)*(hbar/(efm*mass)))/exrg
-        self%hey = ((hbar/dy**2)*(hbar/(efm*mass)))/exrg
-        self%dx = dx
-        self%dy = dy
-        
-        print *,"Hopping energies in x and y [eV]:"
-        print *,self%hex
-        print *,self%hey
-        print *,"---------------------------------"
-        
+        self%dx = Height/nr
+        self%dy = Width/nc
+        self%efm = efm
+        self%hex = ((hbar/self%dx**2)*(hbar/(efm*mass)))/exrg
+        self%hey = ((hbar/self%dy**2)*(hbar/(efm*mass)))/exrg
+            
+            
+        if (flag) then
+            write(*,*) "-----------------------------------"
+            write(*,*) "Lattice constants in y and x [nm]:"
+            write(*,*) self%dy/1E-9
+            write(*,*) self%dx/1E-9
+            write(*,*) ""
+            write(*,*) "Hopping energies in y and x [meV]:"
+            write(*,*) self%hey/1E-3
+            write(*,*) self%hex/1E-3
+            write(*,*) "-----------------------------------"
+        end if
+            
     end function
     
-    ! Destructor
     subroutine GreenDestructor(self)
         implicit none
         
@@ -85,25 +103,8 @@ module GreenCheetah
     !------------------------------------------------------!
     !                PRIVATE MODULE FUNCTIONS              !
     !------------------------------------------------------!
-       
-    !--------- Fermi Function ---------!
-    function Fermi(Energy,T) result(f)
-        implicit none
-        
-        ! Energy = E - mu
-        
-        real(dp),intent(in) :: Energy
-        real(dp),intent(in) :: T
-        real(dp)            :: f
-
-        f = 1.0/(exp(exrg*Energy/(kB*T))+1)
-        
-        print *,exrg*Energy/(kB*T)
-        
-    end function
-       
-     
-    !------- Green's function for the leads -------!
+           
+    !----- Lead Green's function -----!
     function leadGreensFunction(self,E) result(G)
         use linalg
         use omp_lib
@@ -111,7 +112,7 @@ module GreenCheetah
         implicit none
         
         class(GType),intent(in) :: self
-        real(dp),intent(in)     :: E
+        real,intent(in)         :: E
         complex(dp)             :: G(self%nr,self%nc)
 
         real(dp),parameter      :: pi = 3.14159265358979323
@@ -142,7 +143,7 @@ module GreenCheetah
         end do
         !-$OMP END PARALLEL DO
         
-        G = tric(U,G,transpose(U))        
+        G = tri(U,G,transpose(U))        
         
     end function
     
@@ -154,9 +155,10 @@ module GreenCheetah
         
         class(GType),intent(in) :: self
         integer,intent(in)      :: n
-        real(dp)                :: H(self%nr,self%nc)
+        complex(dp)             :: H(self%nr,self%nc)
         
-        integer :: s,i
+        integer     :: s,i
+
         
         H = 0.0
         
@@ -164,6 +166,7 @@ module GreenCheetah
         !$OMP DO 
         do i = 1,self%nr
             H(i,i) = 2.0*(self%hex + self%hey) + self%pot(i,n)
+            
             if (i > 1) then
                 H(i,i-1) = -self%hey
             end if
@@ -174,380 +177,428 @@ module GreenCheetah
         !$OMP END DO
         !$OMP END PARALLEL
     end function
-        
 
     !------------------------------------------------------!
     !                   PUBLIC FUNCTIONS                   !
     !------------------------------------------------------!
     
     !------ Density of States -----!
-    function DOS(self,Energy) result(D)
+    function DOS(self,Energy,B,flag) result(D)
         use linalg
         implicit none
         
-        real(dp),intent(in)     :: Energy
         class(GType),intent(in) :: self
+        real,intent(in)         :: Energy
+        real,intent(in)         :: B
+        logical,intent(in)      :: flag
         real(dp)                :: D(self%nr,self%nc)
         
         integer                 :: n,k,j
         
         real(dp)                :: I(self%nr, self%nr)
-        real(dp)                :: V(self%nr, self%nr)
+        complex(dp)             :: V(self%nr, self%nr)
         complex(dp)             :: Ho(self%nr, self%nr)
         complex(dp)             :: Gnn(self%nr, self%nr)
         complex(dp)             :: Gl(self%nr, self%nr)
         complex(dp)             :: Gr(self%nr, self%nr)
         complex(dp)             :: G(self%nr, self%nr)
-        complex(dp)             :: S(self%nr, self%nr)
+        complex(dp)             :: Sigma(self%nr, self%nr)
         complex(dp)             :: P(self%nr, self%nr)
         complex(dp)             :: M(self%nr, self%nr, self%nc+1)
+        
+        complex(dp)             :: VB
 
+        if (flag .eqv. .True.) then
+            write(*,*) "-----------------------------------"
+            write(*,*) "Local density of states"
+            write(*,*) "  Energy [meV]......:",Energy/1E-3
+            write(*,*) "  Magnetic field [T]:",B
+            write(*,*) "-----------------------------------"
+        end if
         
         ! Indentity and perturbation matrices
-        I = 0.0
+        ! Coupling matrix
         V = 0.0
-        !$OMP PARALLEL DO
+        I = 0.0
+        VB = cmplx(0,exrg*B*self%dx*self%dy/hbar)
         do n = 1,self%nr
+            V(n,n) = -self%hex*exp(n*VB)
             I(n,n) = 1.0
-            V(n,n) = -self%hex
         end do
-        !$OMP END PARALLEL DO
         
             
         ! Lead Green's function
         Gr = self%leadGreensFunction(Energy)
         M(:,:,self%nc+1) = Gr
         
-        ! Sigma = V+.Gnn.V
-        ! G = [(E+i.eta).I - H]^(-1)
-        !(I-G.Sigma).Gnn = G
+        ! Backward Propagation
         Gnn = Gr
         do j = self%nc,1,-1
-            S = d2tri(Gnn,V)
-            G = GAssembly1(Energy,self%Hamiltonian(j),eta)
-            P = I-matmul(G,S)
-            Gnn = solve(P,G)
+            Sigma = tri(V,Gnn,conjg(V))
+            Gnn = GAssembly(Energy,self%Hamiltonian(j),Sigma,eta)
             M(:,:,j) = Gnn
         end do
         
-        ! Sigma = V+.Gnn.V
-        ! G = [(E+i.eta).I - H]^(-1)
-        ! (I-G.Sigma).Gnn = G
-        !
-        ! Sigma = V.Gnn.V+
-        ! (I-Gnn.Sigma).G = Gnn
-        !
-        ! D = -image(diag(G))
+        ! Forward + Merging
         Gnn = Gr
         do j = 1,self%nc
-            S = d2tri(Gnn,V)
-            G = GAssembly1(Energy,self%Hamiltonian(j),eta)
-            P = I-matmul(G,S)
-            Gnn = solve(P,G)
+            ! Forward
+            Sigma = tri(conjg(V),Gnn,V)
+            Gnn = GAssembly(Energy,self%Hamiltonian(j),Sigma,eta)
             
-            S = d2tri(M(:,:,j+1),V)
-            P = I-matmul(Gnn,S)
+            ! Merging
+            Sigma = tri(V,M(:,:,j+1),conjg(V))
+            P = I - matmul(Gnn,Sigma)
             G = solve(P,Gnn)
             
+            ! DOS
             do k = 1,self%nr
                 D(k,j) = -imag(G(k,k))
             end do
         end do
     end function
+      
     
-    !------ Single Point Transmission Function ------!
-    function SingleT(self,Energy) result(r)
-        use linalg
+    !------- Energy Sweep ------!
+    subroutine EnergySweep(self,Emin,Emax,B,T)
         use omp_lib
         implicit none
         
         class(GType),intent(in) :: self
-        real(dp),intent(in)     :: Energy
-        real(dp)                :: r
+        real,intent(in)         :: Emin, Emax
+        real,intent(in)         :: B
+        real,intent(inout)      :: T(:)
         
-        real(dp)        :: I(self%nr,self%nr)
-        real(dp)        :: V(self%nr,self%nr)
-        complex(dp)     :: G_lead(self%nr,self%nr)
-        complex(dp)     :: G_nn(self%nr,self%nr)
-        complex(dp)     :: G_Ln(self%nr,self%nr)
-        complex(dp)     :: S(self%nr,self%nr)
-        real(dp)        :: Ho(self%nr,self%nr)
-        complex(dp)     :: G(self%nr,self%nr)
-        complex(dp)     :: P(self%nr,self%nr)
-        complex(dp)     :: Gama(self%nr,self%nr)
-        integer         :: n,k
+        integer     :: i, sz
+        real        :: Energy
         
-        ! Indentity and perturbation matrices
-        I = 0.0
-        V = 0.0
-        !$OMP PARALLEL DO
-        do n = 1,self%nr
-            I(n,n) = 1.0
-            V(n,n) = -self%hex
+        sz = size(T)
+        write(*,*) "* Energy sweep [meV] from",Emin/1E-3,"to",Emax/1E-3
+        write(*,*) "  Steps:",sz
+        write(*,*) "  Magnetic field [T]:",B
+        
+        !$OMP PARALLEL DO PRIVATE(i,Energy) SHARED(T)
+        do i = 1,sz
+            Energy = Emin + (Emax-Emin)*real(i-1)/(sz-1)
+        
+            T(i) = self%Transmission(Energy,B)
         end do
         !$OMP END PARALLEL DO
-        
-        G_lead = self%leadGreensFunction(Energy)
-        G_nn = G_lead
-        G_Ln = G_lead
-                        
-        ! Loop over columns
-        ! Sigma = V.G_nn.V+
-        ! G_nn = [(E+i.eta).I - H - S]^(-1)
-        ! G_Ln = G_Ln.V.G_nn
-        do n = 1,self%nc
-            G_nn = GAssembly(Energy,self%Hamiltonian(n),d2tri(G_nn,V),eta)
-            G_Ln = tri(G_Ln,V,G_nn)
-        end do
-        
-        ! [G_lead.V.G_nn.V).G_nn = G_lead
-        ! G = G_Ln.V.G_nn
-        P = I - matmul(G_lead,d2tri(G_nn,V))
-        G_nn = solve(P,G_lead)
-        G = tri(G_Ln,V,G_nn)
-        
-        ! S = V+.G_lead.V
-        ! Gamma = i.(S-S+)
-        S = d2tri(G_lead,V)
-        Gama = cmplx(0,1)*(S - conjg(S))
-                                
-        ! Compute trace
-        ! r = Trace(Gama.G.Gama.G+)
-        r = 0.0
-        P = matmul(matmul(Gama,G),matmul(Gama,conjg(G)))
-        do k = 1,self%nr
-            r = r + P(k,k)
-        end do
-    end function
-        
+    end subroutine
     
-    !------ Transmission Function ------!
-    function Transmission(self,sz,Emax) result(r)
-        use linalg
+    !------ Magnetic Sweep -------!
+    subroutine MagneticSweep(self,Bmin,Bmax,Energy,T)
         use omp_lib
         implicit none
         
         class(GType),intent(in) :: self
-        real(dp),intent(in)     :: Emax
-        integer,intent(in)      :: sz
-        real(dp)                :: r(sz)
+        real,intent(in)         :: Bmin, Bmax
+        real,intent(in)         :: Energy
+        real,intent(inout)      :: T(:)
         
-        real(dp)        :: I(self%nr,self%nr)
-        real(dp)        :: V(self%nr,self%nr)
-        complex(dp)     :: G_lead(self%nr,self%nr)
-        complex(dp)     :: G_nn(self%nr,self%nr)
-        complex(dp)     :: G_Ln(self%nr,self%nr)
-        complex(dp)     :: S(self%nr,self%nr)
-        real(dp)        :: Ho(self%nr,self%nr)
-        complex(dp)     :: G(self%nr,self%nr)
-        complex(dp)     :: P(self%nr,self%nr)
-        complex(dp)     :: Gama(self%nr,self%nr)
-        integer         :: m,n,k
-        real(dp)        :: Energy
+        integer     :: i,sz
+        real        :: B
         
-        ! Indentity and perturbation matrices
-        I = 0.0
-        V = 0.0
-        do n = 1,self%nr
-            I(n,n) = 1.0
-            V(n,n) = -self%hex
-        end do
+        sz = size(T)
         
-        r = 0
-        !$OMP PARALLEL DO private(Energy,G_lead,G_nn,G_Ln,P,G,S,Gama,m)
-        do m = 1,sz
-            Energy = Emax*real(m-1)/(sz-1)
-                        
-            G_lead = self%leadGreensFunction(Energy)
-            G_nn = G_lead
-            G_Ln = G_lead
-                            
-            ! Loop over columns
-            ! Sigma = V.G_nn.V+
-            ! G_nn = [(E+i.eta).I - H - S]^(-1)
-            ! G_Ln = G_Ln.V.G_nn
-            do n = 1,self%nc
-                G_nn = GAssembly(Energy,self%Hamiltonian(n),d2tri(G_nn,V),eta)
-                G_Ln = tri(G_Ln,V,G_nn)
-            end do
+        write(*,*) "* Magnetic sweep [T] from",Bmin,"to",Bmax
+        write(*,*) "  Steps:",sz
+        write(*,*) "  Energy [meV]:",Energy/1E-3
+        
+        !$OMP PARALLEL DO PRIVATE(i,B) SHARED(T)
+        do i = 1,sz
+            B = Bmin + (Bmax-Bmin)*real(i-1)/(sz-1)
             
-            ! [G_lead.V.G_nn.V).G_nn = G_lead
-            ! G = G_Ln.V.G_nn
-            P = I - matmul(G_lead,d2tri(G_nn,V))
-            G_nn = solve(P,G_lead)
-            G = tri(G_Ln,V,G_nn)
-            
-            ! S = V+.G_lead.V
-            ! Gamma = i.(S-S+)
-            S = d2tri(G_lead,V)
-            Gama = cmplx(0,1)*(S - conjg(S))
-                                    
-            ! Compute trace
-            ! r = Trace(Gama.G.Gama.G+)
-            P = matmul(matmul(Gama,G),matmul(Gama,conjg(G)))
-            do k = 1,self%nr
-                r(m) = r(m) + real(P(k,k))
-            end do
-            write(*,*) m,Energy,r(m)
+            T(i) = self%Transmission(Energy,B)
         end do
         !$OMP END PARALLEL DO
-    end function
-
+    end subroutine
+        
     !------ Transmission Function ------!
-    function SGM(self,Energy) result(map)
-        use linalg
-        use omp_lib
-        implicit none
-        
-        class(GType),intent(in)     :: self
-        real(dp),intent(in)         :: Energy
-        real(dp)                    :: map(self%nr,self%nc)
-        
-        real(dp)        :: I(self%nr,self%nr)
-        real(dp)        :: V(self%nr,self%nr)
-        real(dp)        :: SPot(self%nr,self%nc)
-        complex(dp)     :: G_lead(self%nr,self%nr)
-        complex(dp)     :: G_nn(self%nr,self%nr)
-        complex(dp)     :: G_Ln(self%nr,self%nr)
-        complex(dp)     :: S(self%nr,self%nr)
-        real(dp)        :: Ho(self%nr,self%nr)
-        complex(dp)     :: G(self%nr,self%nr)
-        complex(dp)     :: P(self%nr,self%nr)
-        complex(dp)     :: Gama(self%nr,self%nr)
-        integer         :: m,n,k,r,q
-        real(dp)        :: tr,tro,s2=0.1
-        
-        ! Indentity and perturbation matrices
-        I = 0.0
-        V = 0.0
-
-        do n = 1,self%nr
-            I(n,n) = 1.0
-            V(n,n) = -self%hex
-        end do
-        
-        !-----------------------------------------------------------------!
-        ! COMPUTE SINGLE SHOT TRANSMISSION                                !
-        !-----------------------------------------------------------------!
-        G_lead = self%leadGreensFunction(Energy)
-        G_nn = G_lead
-        G_Ln = G_lead
-                        
-        ! Loop over columns
-        ! Sigma = V.G_nn.V+
-        ! G_nn = [(E+i.eta).I - H - S]^(-1)
-        ! G_Ln = G_Ln.V.G_nn
-        do n = 1,self%nc
-            G_nn = GAssembly(Energy,self%Hamiltonian(n),d2tri(G_nn,V),eta)
-            G_Ln = tri(G_Ln,V,G_nn)
-        end do
-        
-        ! [G_lead.V.G_nn.V).G_nn = G_lead
-        ! G = G_Ln.V.G_nn
-        P = I - matmul(G_lead,d2tri(G_nn,V))
-        G_nn = solve(P,G_lead)
-        G = tri(G_Ln,V,G_nn)
-        
-        ! S = V+.G_lead.V
-        ! Gamma = i.(S-S+)
-        S = d2tri(G_lead,V)
-        Gama = cmplx(0,1)*(S - conjg(S))
-                                
-        ! Compute trace
-        ! r = Trace(Gama.G.Gama.G+)
-        P = matmul(matmul(Gama,G),matmul(Gama,conjg(G)))
-        tro = 0.0
-        do k = 1,self%nr
-            tro = tro + real(P(k,k))
-        end do
-        write(*,*) "Unperturbed transmission:",tro
-        !-----------------------------------------------------------------!
-        
-        !-----------------------------------------------------------------!
-        ! SCAN GAUSSIAN POTENTIAL                                         !
-        !-----------------------------------------------------------------!
-        
-        do m = 1,self%nc
-        !write(*,*) "SGM Step:",m
-        !$OMP PARALLEL DO PRIVATE(n,P,r,k,SPot,G_nn,G_Ln,G,S,Gama)
-        do n = 1,self%nr
-            SPot = self%Pot
-!             do r = max(1,m-10),min(self%nc,m+10)
-!             do k = max(1,n-10),min(self%nr,n+10)
-!                 SPot(r,k) = SPot(r,k) + 1E-4*exp(-0.5*((r-m)**2+(k-n)**2)/s2)
-!             end do
-!             end do
-            
-            SPot(n,m) = SPot(n,m) + 1E-4
-            
-            G_nn = G_lead
-            G_Ln = G_lead
-                            
-            ! Loop over columns
-            ! Sigma = V.G_nn.V+
-            ! G_nn = [(E+i.eta).I - H - S]^(-1)
-            ! G_Ln = G_Ln.V.G_nn
-            do q = 1,self%nc
-                G_nn = self%GAsm(Energy,SPot(:,q),d2tri(G_nn,V))
-                G_Ln = tri(G_Ln,V,G_nn)
-            end do
-            
-            ! [G_lead.V.G_nn.V).G_nn = G_lead
-            ! G = G_Ln.V.G_nn
-            P = I - matmul(G_lead,d2tri(G_nn,V))
-            G_nn = solve(P,G_lead)
-            G = tri(G_Ln,V,G_nn)
-            
-            ! S = V+.G_lead.V
-            ! Gamma = i.(S-S+)
-            S = d2tri(G_lead,V)
-            Gama = cmplx(0,1)*(S - conjg(S))
-                                    
-            ! Compute trace
-            ! r = Trace(Gama.G.Gama.G+)
-            P = matmul(matmul(Gama,G),matmul(Gama,conjg(G)))
-            tr = 0.0
-            do k = 1,self%nr
-                tr = tr + real(P(k,k))
-            end do
-            
-            map(n,m) = tr-tro
-            SPot(n,m) = SPot(n,m) - 1E-4
-        end do
-        !$OMP END PARALLEL DO
-        end do
-
-    end function    
-    
-    ! Assemble a Green's function given the energy, potential and self-energy
-    function GAsm(self,E,P,S) result(G)
+    function Transmission(self,Energy,B) result(T)
         use linalg
         implicit none
         
-        class(GType),intent(in)     :: self
-        real(dp),intent(in)         :: E
-        real(dp),intent(in)         :: P(:)
-        complex(dp),intent(in)      :: S(:,:)
-        complex(dp)                 :: G(self%nr,self%nr)
+        class(GType),intent(in) :: self
+        real,intent(in)         :: Energy
+        real,intent(in)         :: B
+        real                    :: T
+        
+        real                    :: I(self%nr,self%nr)
+        complex(dp)             :: V(self%nr,self%nr)
+        complex(dp)             :: G_lead(self%nr,self%nr)
+        complex(dp)             :: G_nn(self%nr,self%nr)
+        complex(dp)             :: G_Ln(self%nr,self%nr)
+        complex(dp)             :: S(self%nr,self%nr)
+        complex(dp)             :: Sigma(self%nr,self%nr)
+        complex(dp)             :: G(self%nr,self%nr)
+        complex(dp)             :: P(self%nr,self%nr)
+        complex(dp)             :: Gama(self%nr,self%nr)
+        integer                 :: m,n,k,sz
                 
-        integer     :: i
-        real(dp)    :: H(self%nr,self%nr)
+        complex(dp)             :: VB
         
+                
+        ! Coupling matrix
+        V = 0.0
+        I = 0.0
+        VB = cmplx(0,exrg*B*self%dx*self%dy/hbar)
+        do n = 1,self%nr
+            V(n,n) = -self%hex*exp(n*VB)
+            I(n,n) = 1.0
+        end do
         
+        !** Begin with left lead
+        G_lead = self%leadGreensFunction(Energy)
+        G_nn = G_lead
+        G_Ln = G_lead
+                        
+        ! Loop over columns
+        ! Sigma = V+.G_nn.V
+        ! G_nn = [(E+i.eta).I - H - S]^(-1)
+        ! G_Ln = G_Ln.V.G_nn
+        do n = 1,self%nc
+            Sigma = tri(conjg(V),G_nn,V)
+            G_nn = GAssembly(Energy,self%Hamiltonian(n),Sigma,eta)
+            G_Ln = tri(G_Ln,V,G_nn)
+        end do
+        
+        !** Add right lead
+        ! [G_lead.V.G_nn.V).G_nn = G_lead
+        ! G = G_Ln.V.G_nn
+        Sigma = tri(conjg(V),G_nn,V)
+        P = I - matmul(G_lead,Sigma)
+        G_nn = solve(P,G_lead)
+        G = tri(G_Ln,V,G_nn)
+        
+        !** Compute Gamma matrix
+        ! S = V+.G_lead.V
+        ! Gamma = i.(S-S+)
+        Sigma = tri(conjg(V),G_lead,V)
+        Gama = cmplx(0,1)*(Sigma - conjg(Sigma))
+                                
+        !** Compute trace
+        ! r = Trace(Gama.G.Gama.G+)
+        P = matmul(matmul(Gama,G),matmul(Gama,conjg(G)))
+        T = 0
+        do k = 1,self%nr
+            T = T + real(P(k,k))
+        end do
+    end function
+        
+    !------ Transmission Function Fast ------!
+    function tfun(self,Energy,B,G_lead,V,Id,Pot) result(T)
+        use linalg
+        implicit none
+        
+        class(GType),intent(in) :: self
+        real,intent(in)         :: Energy
+        real,intent(in)         :: B
+        complex(dp),intent(in)  :: G_lead(self%nr,self%nr)
+        complex(dp),intent(in)  :: V(self%nr,self%nr)
+        real,intent(in)         :: Id(self%nr,self%nr)
+        real,intent(in)         :: Pot(self%nr,self%nc)
+        real                    :: T        
+        
+        complex(dp)             :: H(self%nr,self%nr)
+        complex(dp)             :: G_nn(self%nr,self%nr)
+        complex(dp)             :: G_Ln(self%nr,self%nr)
+        complex(dp)             :: S(self%nr,self%nr)
+        complex(dp)             :: Sigma(self%nr,self%nr)
+        complex(dp)             :: G(self%nr,self%nr)
+        complex(dp)             :: P(self%nr,self%nr)
+        complex(dp)             :: Gama(self%nr,self%nr)
+        integer                 :: m,n,k,sz,i
+                
+        complex(dp)             :: VB
+                        
+
+        !** Build fundamental Hamiltonian
         H = 0.0
         do i = 1,self%nr
-            H(i,i) = E + cmplx(0,eta) - (2.0*(self%hex + self%hey) + P(i))
+            H(i,i) = 2.0*(self%hex + self%hey)
+            
             if (i > 1) then
-                H(i,i-1) = self%hey
+                H(i,i-1) = -self%hey
             end if
             if (i < self%nr) then
-                H(i,i+1) = self%hey
+                H(i,i+1) = -self%hey
             end if
+        end do        
+                        
+        !** Begin with left lead
+        G_nn = G_lead
+        G_Ln = G_lead
+                        
+        ! Loop over columns
+        ! Sigma = V+.G_nn.V
+        ! G_nn = [(E+i.eta).I - H - S]^(-1)
+        ! G_Ln = G_Ln.V.G_nn
+        do n = 1,self%nc
+            ! Build Hamiltonian
+            do i = 1,self%nr
+                H(i,i) = H(i,i) + Pot(i,n)
+            end do
+        
+            Sigma = tri(conjg(V),G_nn,V)
+            G_nn = GAssembly(Energy,H,Sigma,eta)
+            G_Ln = tri(G_Ln,V,G_nn)
+            
+            ! Recover Hamiltonian
+            do i = 1,self%nr
+                H(i,i) = H(i,i) - Pot(i,n)
+            end do
         end do
         
-        G = inv(H-S)
-    end function
+        !** Add right lead
+        ! [G_lead.V.G_nn.V).G_nn = G_lead
+        ! G = G_Ln.V.G_nn
+        Sigma = tri(conjg(V),G_nn,V)
+        P = Id - matmul(G_lead,Sigma)
+        G_nn = solve(P,G_lead)
+        G = tri(G_Ln,V,G_nn)
+        
+        !** Compute Gamma matrix
+        ! S = V+.G_lead.V
+        ! Gamma = i.(S-S+)
+        Sigma = tri(conjg(V),G_lead,V)
+        Gama = cmplx(0,1)*(Sigma - conjg(Sigma))
+                                
+        !** Compute trace
+        ! r = Trace(Gama.G.Gama.G+)
+        P = matmul(matmul(Gama,G),matmul(Gama,conjg(G)))
+        T = 0
+        do k = 1,self%nr
+            T = T + real(P(k,k))
+        end do
+    end function    
     
+    !--- Get Fermi energy, wavelength, and wavevector ---!
+    subroutine getFermi(self,n2D,flag)
+        implicit none
+        
+        class(GType),intent(inout)  :: self
+        real,intent(in)             :: n2D  ! [cm^-2]
+        logical,intent(in)          :: flag
+        
+        self%FermiWaveLength = sqrt(2E-4*pi/n2D)
+        self%FermiWaveVector = 2*pi/self%FermiWaveLength
+        self%FermiEnergy = ((hbar*self%FermiWaveVector)**2/(2*mass*self%efm))
+        
+        if (flag) then
+            write(*,*) "Fermi Energy [meV] = ",self%FermiEnergy/(1E-3*exrg)
+            write(*,*) "Fermi Wavelength [nm] = ",self%FermiWaveLength/1E-9
+            write(*,*) "Fermi Wavevector [1/nm] = ",1E-9*self%FermiWavevector
+        end if
+    end subroutine        
+        
+    !--- Scanning Gate Microscopy (SGM) ---!
+    function SGM(self,Energy,B,flag) result(D)
+        use linalg
+        use omp_lib
+        implicit none
+        
+        class(GType),intent(in) :: self
+        real,intent(in)         :: Energy
+        real,intent(in)         :: B
+        logical,intent(in)      :: flag
+        real(dp)                :: D(self%nr,self%nc)
+        
+        integer                 :: n,k,j,ri,rj,tip_pos
+        
+        real(dp)                :: I(self%nr, self%nr)
+        complex(dp)             :: V(self%nr, self%nr)
+        complex(dp)             :: Ho(self%nr, self%nr)
+        complex(dp)             :: Gnn(self%nr, self%nr)
+        complex(dp)             :: Gnnn(self%nr, self%nr)
+        complex(dp)             :: GLn(self%nr, self%nr)
+        complex(dp)             :: GnR(self%nr, self%nr)
+        complex(dp)             :: GLnn(self%nr, self%nr)
+        complex(dp)             :: Gl(self%nr, self%nr)
+        complex(dp)             :: Gr(self%nr, self%nr)
+        complex(dp)             :: G(self%nr, self%nr)
+        complex(dp)             :: Sigma(self%nr, self%nr)
+        complex(dp)             :: Sigma1(self%nr, self%nr)
+        complex(dp)             :: Sigma2(self%nr, self%nr)
+        complex(dp)             :: P(self%nr, self%nr)
+        complex(dp)             :: M(self%nr, self%nr, self%nc+1)
+        complex(dp)             :: Q(self%nr, self%nr, self%nc+1)
+        complex(dp)             :: Gama(self%nr,self%nr)
+        
+        complex(dp)             :: VB
+
+        if (flag .eqv. .True.) then
+            write(*,*) "-----------------------------------"
+            write(*,*) "Scanning Gate Microscopy"
+            write(*,*) "  Energy [meV]......:",Energy/1E-3
+            write(*,*) "  Magnetic field [T]:",B
+            write(*,*) "-----------------------------------"
+        end if
+        
+        ! Indentity and perturbation matrices
+        ! Coupling matrix
+        V = 0.0
+        I = 0.0
+        VB = cmplx(0,exrg*B*self%dx*self%dy/hbar)
+        do n = 1,self%nr
+            V(n,n) = -self%hex*exp(n*VB)
+            I(n,n) = 1.0
+        end do
+            
+        ! Lead Green's function
+        Gr = self%leadGreensFunction(Energy)
+        M(:,:,self%nc+1) = Gr
+        Q(:,:,self%nc+1) = Gr
+        
+        ! Backward Propagation
+        Gnn = Gr
+        GnR = Gr
+        do j = self%nc,1,-1
+            Sigma = tri(V,Gnn,conjg(V))
+            Gnn = GAssembly(Energy,self%Hamiltonian(j),Sigma,eta)
+            GnR = tri(Gnn,V,Gnr)
+            M(:,:,j) = Gnn
+            Q(:,:,j) = Gnr
+        end do
+        
+        ! Forward + Merging
+        Gnn = Gr
+        GLn = Gr
+        do j = 1,self%nc
+            write(*,*) j
+            ! Merge
+            Sigma1 = tri(conjg(V),Gnn,V)
+            Sigma2 = tri(V,M(:,:,j+1),conjg(V))
+            Gnnn = GAssembly(Energy,self%Hamiltonian(j),Sigma1,Sigma2,eta)
+            GLnn = tri(GLn,V,Gnnn)
+            GnR = tri(Gnnn,V,Q(:,:,j+1))
+        
+            ! Forward
+            Gnn = GAssembly(Energy,self%Hamiltonian(j),Sigma1,eta)
+            GLn = tri(GLn,V,Gnn)            
+            
+            ! Transmission
+            do tip_pos = 1,self%nr
+                ! Green's function of Tip 
+                do rj = 1,self%nr
+                    do ri = 1,self%nr
+                        G(ri,rj) = GLnn(ri,tip_pos)*GnR(tip_pos,rj)
+                    end do
+                end do
+                !** Compute Gamma matrix
+                ! S = V+.G_lead.V
+                ! Gamma = i.(S-S+)
+                Sigma = tri(conjg(V),Gr,V)
+                Gama = cmplx(0,1)*(Sigma - conjg(Sigma))
+                                        
+                !** Compute trace
+                ! r = Trace(Gama.G.Gama.G+)
+                P = matmul(matmul(Gama,G),matmul(Gama,conjg(G)))
+                D(tip_pos,j) = 0
+                do k = 1,self%nr
+                    D(tip_pos,j) = D(tip_pos,j) + real(P(k,k))
+                end do
+            end do
+        end do
+    end function    
 end module
-
-
