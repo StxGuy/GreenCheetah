@@ -16,7 +16,7 @@ module GreenCheetah
     real(dp),parameter  :: eta = 1E-15
     real(dp),parameter  :: pi = 3.14159265358979323
                
-    type,public :: GType
+    type,public :: Green
         real,allocatable    :: Pot(:,:)
         integer             :: nr,nc
         real(dp)            :: hex,hey
@@ -43,7 +43,7 @@ module GreenCheetah
     end type
            
 
-    interface GType
+    interface Green
         procedure   :: GreenConstructor
     end interface
     
@@ -59,7 +59,7 @@ module GreenCheetah
         real,intent(in)     :: Height, Width
         real,intent(in)     :: efm              ! Effective mass
         logical,intent(in)  :: flag
-        type(GType)         :: self
+        type(Green)         :: self
         
         integer             :: nr,nc,s(2)
         
@@ -95,7 +95,7 @@ module GreenCheetah
     subroutine GreenDestructor(self)
         implicit none
         
-        type(GType)         :: self
+        type(Green)         :: self
         
         deallocate(self%Pot)
     end subroutine
@@ -111,7 +111,7 @@ module GreenCheetah
         
         implicit none
         
-        class(GType),intent(in) :: self
+        class(Green),intent(in) :: self
         real,intent(in)         :: E
         complex(dp)             :: G(self%nr,self%nc)
 
@@ -153,7 +153,7 @@ module GreenCheetah
         use omp_lib
         implicit none
         
-        class(GType),intent(in) :: self
+        class(Green),intent(in) :: self
         integer,intent(in)      :: n
         complex(dp)             :: H(self%nr,self%nc)
         
@@ -187,7 +187,7 @@ module GreenCheetah
         use linalg
         implicit none
         
-        class(GType),intent(in) :: self
+        class(Green),intent(in) :: self
         real,intent(in)         :: Energy
         real,intent(in)         :: B
         logical,intent(in)      :: flag
@@ -264,7 +264,7 @@ module GreenCheetah
         use omp_lib
         implicit none
         
-        class(GType),intent(in) :: self
+        class(Green),intent(in) :: self
         real,intent(in)         :: Emin, Emax
         real,intent(in)         :: B
         real,intent(inout)      :: T(:)
@@ -291,7 +291,7 @@ module GreenCheetah
         use omp_lib
         implicit none
         
-        class(GType),intent(in) :: self
+        class(Green),intent(in) :: self
         real,intent(in)         :: Bmin, Bmax
         real,intent(in)         :: Energy
         real,intent(inout)      :: T(:)
@@ -319,7 +319,7 @@ module GreenCheetah
         use linalg
         implicit none
         
-        class(GType),intent(in) :: self
+        class(Green),intent(in) :: self
         real,intent(in)         :: Energy
         real,intent(in)         :: B
         real                    :: T
@@ -391,7 +391,7 @@ module GreenCheetah
         use linalg
         implicit none
         
-        class(GType),intent(in) :: self
+        class(Green),intent(in) :: self
         real,intent(in)         :: Energy
         real,intent(in)         :: B
         complex(dp),intent(in)  :: G_lead(self%nr,self%nr)
@@ -477,7 +477,7 @@ module GreenCheetah
     subroutine getFermi(self,n2D,flag)
         implicit none
         
-        class(GType),intent(inout)  :: self
+        class(Green),intent(inout)  :: self
         real,intent(in)             :: n2D  ! [cm^-2]
         logical,intent(in)          :: flag
         
@@ -498,7 +498,7 @@ module GreenCheetah
         use omp_lib
         implicit none
         
-        class(GType),intent(in) :: self
+        class(Green),intent(in) :: self
         real,intent(in)         :: Energy
         real,intent(in)         :: B
         logical,intent(in)      :: flag
@@ -602,3 +602,4 @@ module GreenCheetah
         end do
     end function    
 end module
+
