@@ -4,7 +4,7 @@
 
 ## About
 
-    GreenCheetah: A Non-Equilibrium Green's Function (NEGF) approach for quantum transport in Fortran.
+    GreenCheetah: A Non-Equilibrium Green's Function (NEGF) approach for quantum transport in Fortran and C++/Armadillo.
 
 [![Generic badge](https://img.shields.io/badge/GitHub-StxGuy/GreenCheetah-<COLOR>.svg)](https://github.com/StxGuy/GreenCheetah)
 
@@ -48,5 +48,5 @@ D = G%DOS(energy)
         
 ## License
 
-Copyright (c) 2021 - Carlo R. da Cunha, "GreenCheetah" \
+Copyright (c) 2021-2022 - Carlo R. da Cunha, "GreenCheetah" \
 <carlo.requiao@gmail.com>
