@@ -135,7 +135,7 @@ mat GreensFunction::DOS(float Energy, float B) {
     
     // Initializations
     D = zeros(nr,nc);
-    M = zeros<cx_fcube>(nr,nr,nc);
+    M = zeros<cx_fcube>(nr,nr,nc+1);
     
     // Coupling matrix
     VB = img*exrg*B*dx*dy/hbar;
