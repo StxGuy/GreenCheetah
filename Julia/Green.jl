@@ -87,7 +87,7 @@ function DOS(Energy, B, par::GreenParameters)
     
     Φ = B*par.dx*par.dy
     Φo = h/q
-    τ = -I(par.nrows)*par.hex*exp(im*Φ/Φo)
+    τ = -par.hex*Diagonal(exp.(2π*(1:par.nrows)*im*Φ/Φo))
     τl = τ'
     
     Gr = leadGF(Energy, par)
@@ -130,7 +130,7 @@ function Transmission(Energy, B, par::GreenParameters)
     
     Φ = B*par.dx*par.dy
     Φo = h/q
-    τ = -I(par.nrows)*par.hex*exp(im*Φ/Φo)
+    τ = -par.hex*Diagonal(exp.(2π*(1:par.nrows)*im*Φ/Φo))
     τl = τ'    
         
     # Begin with left lead
